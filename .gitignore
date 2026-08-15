@@ -6,4 +6,4 @@ venv/
 .env
 .idea/
 .vscode/
-
+_to_delete/
