@@ -14,8 +14,24 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
     "Referer": RESULT_PAGE_URL,
 }
-MAX_RETRIES = 2
-RETRY_DELAY_SECONDS = 1.0
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 2.0
+REQUEST_TIMEOUT = 15
+
+
+def _get_with_retry(session: requests.Session, url: str, **kwargs) -> requests.Response:
+    """추첨 직후처럼 접속이 몰리는 시간대의 일시적 지연/오류를 버티기 위한 재시도 래퍼."""
+    last_error: Optional[Exception] = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = session.get(url, timeout=REQUEST_TIMEOUT, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+    raise RuntimeError(f"페이지 요청 실패 ({url})") from last_error
 
 
 def new_session() -> requests.Session:
@@ -23,13 +39,12 @@ def new_session() -> requests.Session:
     batch API accepts requests."""
     session = requests.Session()
     session.headers.update(HEADERS)
-    session.get(RESULT_PAGE_URL, timeout=10)
+    _get_with_retry(session, RESULT_PAGE_URL)
     return session
 
 
 def fetch_latest_round(session: requests.Session) -> int:
-    resp = session.get(RESULT_PAGE_URL, timeout=10)
-    resp.raise_for_status()
+    resp = _get_with_retry(session, RESULT_PAGE_URL)
     match = re.search(r'id="opt_val"\s+value="(\d+)"', resp.text)
     if not match:
         raise RuntimeError("최신 회차 번호를 찾을 수 없습니다 (페이지 구조 변경 가능성)")
@@ -48,12 +63,12 @@ def fetch_batch(session: requests.Session, direction: str, epsd: int) -> list[di
     last_error: Optional[Exception] = None
     for attempt in range(MAX_RETRIES + 1):
         try:
-            resp = session.get(API_URL, params=params, timeout=10)
+            resp = session.get(API_URL, params=params, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
             return data.get("data", {}).get("list") or []
         except (requests.RequestException, ValueError) as exc:
             last_error = exc
             if attempt < MAX_RETRIES:
-                time.sleep(RETRY_DELAY_SECONDS)
+                time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
     raise RuntimeError(f"배치 조회 실패 (dir={direction}, epsd={epsd})") from last_error

@@ -2,7 +2,7 @@ name: Update Lotto Draws
 
 on:
   schedule:
-    - cron: "30 12 * * 6"   # 매주 토요일 21:30 KST
+    - cron: "30 14 * * 6"   # 매주 토요일 23:30 KST (추첨 직후 접속 폭주 시간대를 피하기 위해 지연)
   workflow_dispatch: {}      # 필요 시 수동 실행 버튼도 제공
 
 permissions:
