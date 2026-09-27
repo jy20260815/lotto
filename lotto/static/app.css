@@ -214,6 +214,37 @@ select, input[type="number"], input[type="text"] {
 .chip.hero { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
 .chip.hero::before { display: none; }
 
+/* ---------- 직접 설정: 카테고리 줄 ---------- */
+.rule-rows { display: flex; flex-direction: column; gap: 0.5rem; }
+.rule-row { display: grid; grid-template-columns: 1fr 6.5rem 2.25rem; gap: 0.5rem; align-items: center; }
+.rule-head { margin-bottom: 0.4rem; }
+.rule-head .field-label { margin-bottom: 0; }
+.remove-row-btn {
+  height: 2.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0;
+}
+.remove-row-btn:hover { color: var(--danger); border-color: var(--danger); }
+.remove-row-btn:disabled { visibility: hidden; }
+.add-row-btn {
+  width: 100%;
+  margin-top: 0.6rem;
+  padding: 0.55rem;
+  border-radius: 8px;
+  border: 1.5px dashed var(--border);
+  background: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.add-row-btn:hover { border-color: var(--accent); }
+.add-row-btn span { color: var(--muted); font-weight: 400; }
+
 /* ---------- 세부 조건 ---------- */
 .config-card { padding: 1.1rem 1.25rem 1.25rem; }
 details.options { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.9rem; }

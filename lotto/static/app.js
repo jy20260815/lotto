@@ -331,10 +331,9 @@ function buildComboCard(combo, titleText, cat, indexTag) {
 }
 
 const resultsEl = $("results");
-function addResultCards(cards) {
-  const empty = resultsEl.querySelector(".empty-msg");
-  if (empty) empty.remove();
-  [...cards].reverse().forEach(card => resultsEl.prepend(card));
+// 새로 생성하면 이전 결과는 지우고 이번 결과만 보여준다 (남길 조합은 장바구니에 담는다).
+function showResultCards(cards) {
+  resultsEl.replaceChildren(...cards);
 }
 
 /* ---------- 번호 생성: 세부 조건 ---------- */
@@ -412,8 +411,10 @@ function updateOptionsSummary() {
 
 /* ---------- 번호 생성: 요청 ---------- */
 const chipRow = $("chip-row");
-const catSelect = $("cat-select");
-const countSelect = $("count-select");
+const ruleRowsEl = $("rule-rows");
+const addRowBtn = $("add-row");
+const MAX_RULE_ROWS = 5;
+const COUNT_OPTIONS = [1, 3, 5, 10];
 const ctaBtn = $("cta-btn");
 const genError = $("gen-error");
 let busy = false;
@@ -435,21 +436,27 @@ async function withBusy(fn) {
   }
 }
 
-function generateCategory(cat, count, params) {
+async function fetchCategoryCards(cat, count, params) {
+  const query = new URLSearchParams(params);
+  query.set("rule", cat.id);
+  query.set("count", count);
+  const data = await api("/api/generate?" + query);
+  return data.combinations.map((combo, idx) =>
+    buildComboCard(combo, cat.name, cat, count > 1 ? `조합 ${idx + 1}` : null));
+}
+
+/* requests: [{ cat, count }] — 모든 줄을 생성한 뒤 한 번에 보여준다. 하나라도 실패하면 이전 결과를 유지한다. */
+function generateCategories(requests, params) {
   return withBusy(async () => {
-    const query = new URLSearchParams(params);
-    query.set("rule", cat.id);
-    query.set("count", count);
-    const data = await api("/api/generate?" + query);
-    addResultCards(data.combinations.map((combo, idx) =>
-      buildComboCard(combo, cat.name, cat, count > 1 ? `조합 ${idx + 1}` : null)));
+    const groups = await Promise.all(requests.map(({ cat, count }) => fetchCategoryCards(cat, count, params)));
+    showResultCards(groups.flat());
   });
 }
 
 function generateWeekly() {
   return withBusy(async () => {
     const data = await api("/api/weekly");
-    addResultCards(data.picks.map(combo => buildComboCard(combo, combo.label, categoryById(combo.slot_rule), null)));
+    showResultCards(data.picks.map(combo => buildComboCard(combo, combo.label, categoryById(combo.slot_rule), null)));
   });
 }
 
@@ -463,12 +470,8 @@ CATEGORIES.forEach(cat => {
   const chip = el("button", "chip", cat.shortName);
   chip.type = "button";
   chip.style.setProperty("--c", cat.color);
-  chip.addEventListener("click", () => generateCategory(cat, 1));
+  chip.addEventListener("click", () => generateCategories([{ cat, count: 1 }]));
   chipRow.appendChild(chip);
-
-  const opt = el("option", null, cat.name);
-  opt.value = cat.id;
-  catSelect.appendChild(opt);
 
   const info = el("div", "info-item");
   const dot = el("span", "dot");
@@ -477,8 +480,64 @@ CATEGORIES.forEach(cat => {
   infoList.appendChild(info);
 });
 
+/* ---------- 직접 설정: 카테고리 줄 (최대 5줄) ---------- */
+function ruleRows() {
+  return [...ruleRowsEl.querySelectorAll(".rule-row")];
+}
+
+function refreshRuleRows() {
+  const rows = ruleRows();
+  rows.forEach((row, idx) => {
+    row.querySelector(".remove-row-btn").disabled = rows.length === 1;
+    row.querySelector(".cat-select").setAttribute("aria-label", `카테고리 ${idx + 1}`);
+    row.querySelector(".count-select").setAttribute("aria-label", `카테고리 ${idx + 1} 생성 개수`);
+  });
+  addRowBtn.hidden = rows.length >= MAX_RULE_ROWS;
+  $("row-count").textContent = `(${rows.length}/${MAX_RULE_ROWS})`;
+}
+
+function addRuleRow() {
+  if (ruleRows().length >= MAX_RULE_ROWS) return;
+  // 새 줄은 아직 고르지 않은 카테고리로 시작한다.
+  const used = new Set(ruleRows().map(row => row.querySelector(".cat-select").value));
+  const next = CATEGORIES.find(c => !used.has(c.id)) || CATEGORIES[0];
+
+  const row = el("div", "rule-row");
+  const catSel = el("select", "cat-select");
+  CATEGORIES.forEach(cat => {
+    const opt = el("option", null, cat.name);
+    opt.value = cat.id;
+    catSel.appendChild(opt);
+  });
+  catSel.value = next.id;
+  const countSel = el("select", "count-select");
+  COUNT_OPTIONS.forEach(n => {
+    const opt = el("option", null, `${n}개`);
+    opt.value = n;
+    countSel.appendChild(opt);
+  });
+  countSel.value = "5";
+  const removeBtn = el("button", "remove-row-btn", "×");
+  removeBtn.type = "button";
+  removeBtn.setAttribute("aria-label", "이 카테고리 빼기");
+  removeBtn.addEventListener("click", () => {
+    row.remove();
+    refreshRuleRows();
+  });
+  row.append(catSel, countSel, removeBtn);
+  ruleRowsEl.appendChild(row);
+  refreshRuleRows();
+}
+
+addRowBtn.addEventListener("click", addRuleRow);
+addRuleRow();
+
 ctaBtn.addEventListener("click", () => {
-  generateCategory(categoryById(catSelect.value), parseInt(countSelect.value, 10), readConstraints());
+  const requests = ruleRows().map(row => ({
+    cat: categoryById(row.querySelector(".cat-select").value),
+    count: parseInt(row.querySelector(".count-select").value, 10),
+  }));
+  generateCategories(requests, readConstraints());
 });
 
 /* ---------- 당첨 확인 ---------- */

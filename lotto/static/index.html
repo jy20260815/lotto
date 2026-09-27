@@ -44,21 +44,12 @@
 
     <h2 class="section-title">직접 설정</h2>
     <div class="card config-card">
-      <div class="field-grid">
-        <div class="field">
-          <label for="cat-select">카테고리</label>
-          <select id="cat-select"></select>
-        </div>
-        <div class="field">
-          <label for="count-select">생성 개수</label>
-          <select id="count-select">
-            <option value="1">1개</option>
-            <option value="3">3개</option>
-            <option value="5" selected>5개</option>
-            <option value="10">10개</option>
-          </select>
-        </div>
+      <div class="rule-row rule-head" aria-hidden="true">
+        <span class="field-label">카테고리</span>
+        <span class="field-label">생성 개수</span>
       </div>
+      <div id="rule-rows" class="rule-rows"></div>
+      <button class="add-row-btn" id="add-row" type="button">+ 카테고리 추가 <span id="row-count"></span></button>
 
       <details class="options" id="options">
         <summary>세부 조건 <span class="options-summary" id="options-summary">없음</span></summary>
