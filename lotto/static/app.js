@@ -63,12 +63,9 @@ function fmtInt(n) {
   return n.toLocaleString("ko-KR");
 }
 
-function drawColorClass(n) {
-  if (n <= 10) return "d1";
-  if (n <= 20) return "d2";
-  if (n <= 30) return "d3";
-  if (n <= 40) return "d4";
-  return "d5";
+/* 번호 공 색은 십의 자리로 구분: 1~9, 10~19, 20~29, 30~39, 40~45 */
+function ballColorClass(n) {
+  return "d" + (Math.floor(n / 10) + 1);
 }
 
 function ball(n, cls) {
@@ -231,7 +228,7 @@ function buildCartCard(numbers) {
   card.appendChild(headerRow);
 
   const balls = el("div", "balls");
-  numbers.forEach(n => balls.appendChild(ball(n, "neutral")));
+  numbers.forEach(n => balls.appendChild(ball(n, ballColorClass(n))));
   card.appendChild(balls);
   return card;
 }
@@ -253,7 +250,7 @@ function renderCart() {
   }
   const card = el("div", "card");
   const balls = el("div", "balls");
-  todayPick.forEach(n => balls.appendChild(ball(n, "neutral")));
+  todayPick.forEach(n => balls.appendChild(ball(n, ballColorClass(n))));
   const copyBtn = el("button", "small-btn", "오늘의 번호 복사");
   copyBtn.type = "button";
   copyBtn.style.marginTop = "0.8rem";
@@ -264,13 +261,6 @@ function renderCart() {
 tabLoaders.cart = renderCart;
 
 /* ---------- 번호 생성: 조합 카드 ---------- */
-function ballClass(source) {
-  if (source.includes("고정수")) return "pinned";
-  if (source.includes("고확률") || source.includes("고빈도")) return "high";
-  if (source.includes("저확률") || source.includes("저빈도")) return "low";
-  return "neutral";
-}
-
 function buildComboCard(combo, titleText, cat, indexTag) {
   const card = el("div", "card result-card");
   card.style.setProperty("--cat", cat.color);
@@ -302,7 +292,10 @@ function buildComboCard(combo, titleText, cat, indexTag) {
   const balls = el("div", "balls");
   const table = el("table");
   combo.detail.forEach(item => {
-    balls.appendChild(ball(item.number, ballClass(item.source)));
+    const pinned = item.source.includes("고정수");
+    const node = ball(item.number, ballColorClass(item.number) + (pinned ? " pinned" : ""));
+    if (pinned) node.title = "고정수";
+    balls.appendChild(node);
     const ratioLabel = item.source.includes("최근") ? "최근 100회 출현비율" : "역대 출현비율";
     const row = el("tr");
     row.append(
@@ -312,15 +305,28 @@ function buildComboCard(combo, titleText, cat, indexTag) {
     );
     table.appendChild(row);
   });
-  card.append(balls, table);
+  card.appendChild(balls);
 
+  // 번호별 근거 표와 특징은 기본으로 접어두고 버튼으로 펼친다.
+  const details = el("div", "combo-details");
+  details.hidden = true;
+  details.appendChild(table);
   if (combo.traits) {
     const traitsEl = el("div", "traits", "특징: " + combo.traits.join(", "));
     traitsEl.appendChild(el("div", "disclaimer",
       "이 조합은 당첨 확률을 높이지 않습니다. 모든 조합의 당첨 확률은 동일합니다. " +
       "다만 다른 사람이 이 조합을 고를 가능성이 낮아서, 당첨 시 상금을 나눠 가질 인원이 줄어들 수 있습니다."));
-    card.appendChild(traitsEl);
+    details.appendChild(traitsEl);
   }
+  const toggle = el("button", "details-toggle", "세부정보 보기");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.addEventListener("click", () => {
+    details.hidden = !details.hidden;
+    toggle.textContent = details.hidden ? "세부정보 보기" : "세부정보 닫기";
+    toggle.setAttribute("aria-expanded", String(!details.hidden));
+  });
+  card.append(toggle, details);
   return card;
 }
 
@@ -488,9 +494,9 @@ function renderDraw(draw) {
   $("draw-date").textContent = draw.draw_date;
   const balls = $("draw-balls");
   balls.replaceChildren();
-  draw.numbers.forEach(n => balls.appendChild(ball(n, drawColorClass(n))));
+  draw.numbers.forEach(n => balls.appendChild(ball(n, ballColorClass(n))));
   balls.appendChild(el("span", "plus", "+"));
-  const bonus = ball(draw.bonus, drawColorClass(draw.bonus));
+  const bonus = ball(draw.bonus, ballColorClass(draw.bonus));
   bonus.title = "보너스 번호";
   bonus.setAttribute("aria-label", `보너스 ${draw.bonus}`);
   balls.appendChild(bonus);
@@ -546,7 +552,7 @@ async function runCheck(tickets, title) {
     header.appendChild(el("span", "rank-badge" + (result.rank ? " win" : ""), result.rank_label));
     card.appendChild(header);
     const balls = el("div", "balls");
-    result.numbers.forEach(n => balls.appendChild(ball(n, winning.has(n) ? drawColorClass(n) : "miss")));
+    result.numbers.forEach(n => balls.appendChild(ball(n, winning.has(n) ? ballColorClass(n) : "miss")));
     card.appendChild(balls);
     if (result.bonus_matched) {
       card.appendChild(el("p", "check-meta", `보너스 번호 ${data.draw.bonus} 포함`));
@@ -780,9 +786,9 @@ async function renderRecentDraws() {
     const row = el("div", "recent-row");
     row.appendChild(el("span", "round", `${draw.round}회`));
     const balls = el("div", "balls");
-    draw.numbers.forEach(n => balls.appendChild(ball(n, "small " + drawColorClass(n))));
+    draw.numbers.forEach(n => balls.appendChild(ball(n, "small " + ballColorClass(n))));
     balls.appendChild(el("span", "plus", "+"));
-    balls.appendChild(ball(draw.bonus, "small " + drawColorClass(draw.bonus)));
+    balls.appendChild(ball(draw.bonus, "small " + ballColorClass(draw.bonus)));
     row.appendChild(balls);
     box.appendChild(row);
   });
