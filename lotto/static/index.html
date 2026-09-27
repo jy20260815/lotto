@@ -234,11 +234,11 @@
   <section class="panel" id="panel-simulate" role="tabpanel" hidden>
     <div class="card config-card">
       <p class="hint top">
-        최근 5회차에 회차마다 자동(무작위) 번호를 아래 개수만큼 샀다면 몇 등이 몇 개 당첨됐을지 모의로 계산합니다.
+        회차를 고르면, 그 회차에 자동(무작위) 번호를 5개부터 1,000만 개까지 샀다면 몇 등이 몇 개 당첨됐을지 모의로 계산해 보여줍니다.
         한 개에 1,000원 기준이며, "다시 뽑기"를 누르면 새로 구매한 것처럼 다시 계산합니다.
       </p>
-      <span class="field-label" id="sim-amounts-label">회차당 구매 개수</span>
-      <div class="segmented amount-chips" id="sim-amounts" role="radiogroup" aria-labelledby="sim-amounts-label"></div>
+      <span class="field-label" id="sim-rounds-label">회차 선택 (최근 10회)</span>
+      <div class="segmented round-chips" id="sim-rounds" role="radiogroup" aria-labelledby="sim-rounds-label"></div>
       <button class="cta-btn" id="sim-rerun" type="button">다시 뽑기</button>
       <p class="form-error" id="sim-error" role="alert"></p>
     </div>

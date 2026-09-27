@@ -164,7 +164,7 @@ def api_backtest(rounds: int = 100, tickets: int = 5, seed: int | None = None) -
 
 
 @app.get("/api/simulate")
-def api_simulate(rounds: int = 5, seed: int | None = None) -> dict:
+def api_simulate(rounds: int = 10, seed: int | None = None) -> dict:
     """최근 rounds회차마다 무작위 번호를 5장~1000만 장씩 샀을 때 등수별 당첨 장수."""
     if not (1 <= rounds <= 10):
         raise HTTPException(status_code=400, detail="rounds는 1~10 사이여야 합니다")

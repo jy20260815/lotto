@@ -538,15 +538,13 @@ details.table-view .table-wrap { margin-top: 0.5rem; max-height: 320px; overflow
 .nowrap { white-space: nowrap; }
 
 /* ---------- 구매 시뮬레이션 ---------- */
-.amount-chips { display: flex; margin-top: 0; }
-.sim-draw { display: block; font-size: 0.72rem; color: var(--muted); font-weight: 400; white-space: normal; max-width: 7.5rem; }
+.round-chips { display: flex; margin-top: 0; }
+.round-chips button { font-variant-numeric: tabular-nums; }
+.sim-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+.sim-head .muted { font-size: 0.82rem; }
+.sim-balls { margin-top: 0.8rem; }
+.sim-sub { display: block; font-size: 0.72rem; color: var(--muted); font-weight: 400; white-space: nowrap; }
 .sim-table { font-size: 0.8rem; font-variant-numeric: tabular-nums; }
-.sim-table th, .sim-table td { padding: 0.4rem 0.3rem; }
+.sim-table th, .sim-table td { padding: 0.45rem 0.3rem; }
 .sim-table th { white-space: nowrap; }
 .sim-table td.hit { color: var(--win); font-weight: 700; }
-.sim-table tr.sum-row td { border-top: 2px solid var(--axis); color: var(--text); font-weight: 700; }
-.sim-table tr.selectable { cursor: pointer; }
-.sim-table tr.selectable:hover td { background: var(--card-strong); }
-.sim-table tr.selected td { background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
-.sim-summary { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin: 0.6rem 0 0.2rem; font-size: 0.82rem; color: var(--desc); }
-.sim-summary b { color: var(--text); }

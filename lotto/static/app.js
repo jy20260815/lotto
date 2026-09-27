@@ -893,16 +893,22 @@ document.querySelectorAll("#window-filter button").forEach(btn => {
 tabLoaders.stats = loadStats;
 
 /* ---------- 구매 시뮬레이션 ---------- */
-const simAmountsEl = $("sim-amounts");
+const SIM_ROUNDS = 10;
+const simRoundsEl = $("sim-rounds");
 const simOutput = $("sim-output");
 const simRerun = $("sim-rerun");
 let simData = null;
-let simAmount = 5;
+let simRound = null;
 
 function fmtExpected(v) {
   if (v < 0.01) return "≈0";
   if (v < 10) return v.toFixed(2);
   return fmtInt(Math.round(v));
+}
+
+function fmtChance(p) {
+  const pct = p * 100;
+  return pct < 1 ? `${pct.toPrecision(2)}%` : `${pct.toFixed(1)}%`;
 }
 
 function simTable(headers) {
@@ -916,7 +922,7 @@ function simTable(headers) {
   return { wrap, table };
 }
 
-// 1~3등이 실제로 나온 칸은 강조한다 (기댓값 행은 강조하지 않음).
+// 1~3등이 실제로 나온 칸은 강조한다 (기댓값 표는 강조하지 않음).
 function rankCells(tr, ranks, format = fmtInt) {
   [1, 2, 3, 4, 5].forEach(rank => {
     const v = ranks[rank];
@@ -925,97 +931,91 @@ function rankCells(tr, ranks, format = fmtInt) {
   });
 }
 
-function renderSimAmounts() {
-  simAmountsEl.replaceChildren();
-  simData.results.forEach(r => {
-    const btn = el("button", null, fmtAmount(r.amount));
+function amountCell(amount, sub) {
+  const cell = el("td", "strong nowrap", fmtAmount(amount));
+  cell.appendChild(el("span", "sim-sub", sub));
+  return cell;
+}
+
+function renderSimRounds() {
+  simRoundsEl.replaceChildren();
+  // 최신 회차가 앞에 오도록
+  [...simData.draws].reverse().forEach(draw => {
+    const btn = el("button", null, `${draw.round}회`);
     btn.type = "button";
     btn.setAttribute("role", "radio");
-    btn.setAttribute("aria-checked", String(r.amount === simAmount));
+    btn.setAttribute("aria-checked", String(draw.round === simRound));
     btn.addEventListener("click", () => {
-      simAmount = r.amount;
+      simRound = draw.round;
       renderSimulation();
     });
-    simAmountsEl.appendChild(btn);
+    simRoundsEl.appendChild(btn);
   });
 }
 
 function renderSimulation() {
-  renderSimAmounts();
-  const drawByRound = new Map(simData.draws.map(d => [d.round, d]));
-  const result = simData.results.find(r => r.amount === simAmount);
-  const roundCount = simData.draws.length;
+  renderSimRounds();
+  const draw = simData.draws.find(d => d.round === simRound);
   simOutput.replaceChildren();
 
-  // 선택한 개수: 회차별 등수 표
-  const detail = el("div", "card");
-  detail.appendChild(el("h3", "chart-title", `회차마다 ${fmtAmount(result.amount)}씩 구매`));
-  const summary = el("div", "sim-summary");
-  const addSummary = (label, value) => {
-    const item = el("span", null, label + " ");
-    item.appendChild(el("b", null, value));
-    summary.appendChild(item);
-  };
-  const chance = result.first_prize_chance * 100;
-  addSummary("회당 비용", fmtWon(result.cost_per_round));
-  addSummary(`${roundCount}회 총 비용`, fmtWon(result.total_cost));
-  addSummary("회당 1등이 1개라도 나올 확률", `${chance < 1 ? chance.toPrecision(2) : chance.toFixed(1)}%`);
-  detail.appendChild(summary);
+  const card = el("div", "card");
+  const head = el("div", "sim-head");
+  head.appendChild(el("h3", "chart-title", `${draw.round}회에 이만큼 샀다면`));
+  head.appendChild(el("span", "muted", `${draw.draw_date} 추첨`));
+  card.appendChild(head);
+  const balls = el("div", "balls sim-balls");
+  draw.numbers.forEach(n => balls.appendChild(ball(n, "small " + ballColorClass(n))));
+  balls.appendChild(el("span", "plus", "+"));
+  balls.appendChild(ball(draw.bonus, "small " + ballColorClass(draw.bonus)));
+  card.appendChild(balls);
 
-  const { wrap, table } = simTable(["회차", "1등", "2등", "3등", "4등", "5등"]);
-  result.per_round.forEach(row => {
-    const draw = drawByRound.get(row.round);
+  const { wrap, table } = simTable(["구매 개수", "1등", "2등", "3등", "4등", "5등"]);
+  simData.results.forEach(r => {
+    const row = r.per_round.find(pr => pr.round === simRound);
     const tr = el("tr");
-    const roundCell = el("td", "strong nowrap", `${row.round}회`);
-    roundCell.appendChild(el("span", "sim-draw", `${draw.numbers.join("·")} +${draw.bonus}`));
-    tr.appendChild(roundCell);
+    tr.appendChild(amountCell(r.amount, fmtWon(r.cost_per_round)));
     rankCells(tr, row.ranks);
     table.appendChild(tr);
   });
-  const sumRow = el("tr", "sum-row");
-  sumRow.appendChild(el("td", "nowrap", "합계"));
-  rankCells(sumRow, result.totals);
-  table.appendChild(sumRow);
-  const expRow = el("tr");
-  expRow.appendChild(el("td", "nowrap", "이론 기댓값"));
-  rankCells(expRow, result.expected, fmtExpected);
-  table.appendChild(expRow);
-  detail.appendChild(wrap);
-  detail.appendChild(el("p", "hint", result.method === "direct"
-    ? "무작위 번호를 실제로 하나씩 뽑아 각 회차 당첨번호와 맞춰본 결과입니다."
-    : "개수가 많아 하나씩 뽑는 대신, 무작위 번호를 이만큼 샀을 때의 등수별 개수를 확률분포에서 바로 뽑았습니다. 하나씩 뽑은 것과 통계적으로 같은 결과입니다."));
-  simOutput.appendChild(detail);
+  card.appendChild(wrap);
+  card.appendChild(el("p", "hint",
+    "1,000개까지는 무작위 번호를 실제로 하나씩 뽑아 맞춰봤고, 1만 개부터는 무작위 번호를 그만큼 샀을 때의 " +
+    "등수별 개수를 확률분포에서 바로 뽑았습니다. 하나씩 뽑은 것과 통계적으로 같은 결과입니다."));
 
-  // 전체 개수 한눈에 보기
-  const overview = el("div", "card");
-  overview.appendChild(el("h3", "chart-title", `구매 개수별 ${roundCount}회 합계`));
-  overview.appendChild(el("p", "chart-sub", "행을 누르면 위에서 회차별로 볼 수 있습니다."));
-  const all = simTable(["회차당", "1등", "2등", "3등", "4등", "5등"]);
+  // 이론 기댓값은 접어둔다. 무작위 번호의 등수 확률은 회차와 상관없이 같다.
+  const expected = el("div", "combo-details");
+  expected.hidden = true;
+  const exp = simTable(["구매 개수", "1등", "2등", "3등", "4등", "5등"]);
   simData.results.forEach(r => {
-    const tr = el("tr", "selectable" + (r.amount === simAmount ? " selected" : ""));
-    tr.tabIndex = 0;
-    const amountCell = el("td", "strong nowrap", fmtAmount(r.amount));
-    amountCell.appendChild(el("span", "sim-draw", `총 ${fmtWon(r.total_cost)}`));
-    tr.appendChild(amountCell);
-    rankCells(tr, r.totals);
-    const select = () => {
-      simAmount = r.amount;
-      renderSimulation();
-      simOutput.scrollIntoView({ behavior: "smooth", block: "start" });
-    };
-    tr.addEventListener("click", select);
-    tr.addEventListener("keydown", event => { if (event.key === "Enter") select(); });
-    all.table.appendChild(tr);
+    const tr = el("tr");
+    const perRound = {};
+    Object.entries(r.expected).forEach(([rank, v]) => { perRound[rank] = v / simData.draws.length; });
+    tr.appendChild(amountCell(r.amount, `1등 확률 ${fmtChance(r.first_prize_chance)}`));
+    rankCells(tr, perRound, fmtExpected);
+    exp.table.appendChild(tr);
   });
-  overview.appendChild(all.wrap);
-  simOutput.appendChild(overview);
+  expected.appendChild(exp.wrap);
+  expected.appendChild(el("p", "hint",
+    "한 회차에 그만큼 샀을 때 평균적으로 기대되는 당첨 개수입니다. \"1등 확률\"은 1등이 1개라도 나올 확률입니다."));
+  const toggle = el("button", "details-toggle", "이론 기댓값 보기");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.addEventListener("click", () => {
+    expected.hidden = !expected.hidden;
+    toggle.textContent = expected.hidden ? "이론 기댓값 보기" : "이론 기댓값 닫기";
+    toggle.setAttribute("aria-expanded", String(!expected.hidden));
+  });
+  card.append(toggle, expected);
+  simOutput.appendChild(card);
 }
 
 async function loadSimulation() {
   simRerun.disabled = true;
   $("sim-error").textContent = "";
   try {
-    simData = await api("/api/simulate?rounds=5");
+    simData = await api(`/api/simulate?rounds=${SIM_ROUNDS}`);
+    const rounds = simData.draws.map(d => d.round);
+    if (!rounds.includes(simRound)) simRound = rounds[rounds.length - 1];
     renderSimulation();
   } catch (err) {
     $("sim-error").textContent = err.message;

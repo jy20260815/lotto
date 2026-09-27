@@ -1,4 +1,4 @@
-"""구매 시뮬레이션: 최근 회차마다 무작위(자동) 번호를 N장씩 샀다면 등수별로 몇 장이 당첨됐을지.
+"""구매 시뮬레이션: 최근 각 회차에 무작위(자동) 번호를 N장씩 샀다면 등수별로 몇 장이 당첨됐을지.
 
 적은 장수는 실제로 번호를 뽑아 맞춰보고, 많은 장수(수백만~천만 장)는 한 장씩 뽑는 대신
 "무작위 N장의 등수별 장수"를 다항분포에서 바로 뽑는다. 무작위 번호 한 장의 등수 확률은
@@ -38,7 +38,7 @@ def _multinomial_counts(amount: int, rng: random.Random) -> dict[int, int]:
     return counts
 
 
-def simulate_purchases(rounds: int = 5, seed: int | None = None) -> dict:
+def simulate_purchases(rounds: int = 10, seed: int | None = None) -> dict:
     draws = list(reversed(recent_draws(rounds)))
     if not draws:
         raise RuntimeError("수집된 회차가 없습니다. 먼저 데이터 수집을 실행하세요.")
