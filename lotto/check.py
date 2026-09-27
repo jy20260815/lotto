@@ -63,3 +63,48 @@ def check_tickets(tickets: list[list[int]], draw: dict) -> list[dict]:
             }
         )
     return results
+
+
+def all_draws() -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM draws ORDER BY round").fetchall()
+    finally:
+        conn.close()
+    return [_row_to_draw(row) for row in rows]
+
+
+def ticket_history(tickets: list[list[int]], best_round_limit: int = 3) -> dict:
+    """조합마다 '역대 모든 회차에 이 번호를 샀다면' 등수별 당첨 횟수와 최고 일치 기록."""
+    draws = all_draws()
+    if not draws:
+        return {"total_draws": 0, "latest": None, "results": []}
+    latest = draws[-1]
+    results = []
+    for numbers in tickets:
+        picked = set(numbers)
+        ranks = {r: 0 for r in RANK_LABELS}
+        best = 0
+        best_rounds: list[int] = []
+        for draw in draws:
+            winning = set(draw["numbers"])
+            matched = len(picked & winning)
+            rank = rank_of(numbers, winning, draw["bonus"])
+            if rank:
+                ranks[rank] += 1
+            if matched > best:
+                best, best_rounds = matched, [draw["round"]]
+            elif matched == best:
+                best_rounds.append(draw["round"])
+        results.append(
+            {
+                "numbers": sorted(numbers),
+                "ranks": ranks,
+                "best_match": best,
+                "best_match_count": len(best_rounds),
+                # 최고 일치 회차 중 최근 것부터 몇 개만
+                "best_rounds": sorted(best_rounds, reverse=True)[:best_round_limit],
+                "latest_overlap": len(picked & set(latest["numbers"])),
+            }
+        )
+    return {"total_draws": len(draws), "latest": latest, "results": results}

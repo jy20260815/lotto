@@ -537,6 +537,36 @@ details.table-view .table-wrap { margin-top: 0.5rem; max-height: 320px; overflow
 }
 .nowrap { white-space: nowrap; }
 
+/* ---------- 오늘의 나의 번호 ---------- */
+.today-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; font-size: 0.85rem; }
+.today-tags { margin: 0.8rem 0 0; }
+.today-desc { margin: 0.6rem 0 0; padding-left: 1.1rem; font-size: 0.82rem; color: var(--desc); line-height: 1.65; }
+.today-desc .muted { color: var(--muted); }
+
+/* ---------- 오늘의 번호 인쇄본 (PDF로 저장) ---------- */
+.print-sheet { display: none; }
+@media print {
+  @page { size: A4; margin: 16mm; }
+  body.printing > *:not(.print-sheet) { display: none !important; }
+  body.printing { background: #fff; }
+  body.printing .print-sheet {
+    display: block;
+    /* 다크 모드여도 흰 종이에 검은 글씨로 */
+    --text: #111; --muted: #555; --desc: #333; --border: #d5d7dd; --card: #fff; --card-strong: #f3f4f7;
+    color: #111;
+    font-size: 11pt;
+  }
+  .print-sheet h1 { font-size: 18pt; margin: 0 0 4pt; }
+  .print-meta { color: #555; margin: 0 0 14pt; font-size: 10pt; }
+  .print-item { padding: 10pt 0; border-top: 1px solid #d5d7dd; break-inside: avoid; }
+  .print-item-head { display: flex; align-items: center; gap: 10pt; }
+  .print-index { font-weight: 700; font-size: 12pt; min-width: 14pt; }
+  .print-sheet .ball { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-sheet .pill-tag { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-sheet .today-desc { color: #333; }
+  .print-note { margin-top: 14pt; padding-top: 8pt; border-top: 1px solid #d5d7dd; color: #555; font-size: 9pt; }
+}
+
 /* ---------- 구매 시뮬레이션 ---------- */
 .round-chips { display: flex; margin-top: 0; }
 .round-chips button { font-variant-numeric: tabular-nums; }

@@ -100,6 +100,15 @@ class ApiTest(unittest.TestCase):
         bad = self.client.post("/api/check", json={"tickets": [[1, 1, 2, 3, 4, 5]]})
         self.assertEqual(bad.status_code, 400)
 
+    def test_history(self):
+        latest = self.client.get("/api/draws/latest").json()
+        res = self.client.post("/api/history", json={"tickets": [latest["numbers"]]}).json()
+        result = res["results"][0]
+        self.assertEqual(result["best_match"], 6)
+        self.assertIn(latest["round"], result["best_rounds"])
+        self.assertGreaterEqual(result["ranks"]["1"], 1)
+        self.assertEqual(result["latest_overlap"], 6)
+
     def test_stats(self):
         data = self.client.get("/api/stats?window=100").json()
         self.assertEqual(data["total_draws"], 100)

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from .analysis import summarize
 from .backtest import run_backtest
-from .check import check_tickets, get_draw, recent_draws
+from .check import check_tickets, get_draw, recent_draws, ticket_history
 from .simulate import simulate_purchases
 from .generate import (
     MAX_SUM,
@@ -126,18 +126,33 @@ class CheckRequest(BaseModel):
     round: int | None = None
 
 
-@app.post("/api/check")
-def api_check(req: CheckRequest) -> dict:
-    if not (1 <= len(req.tickets) <= 50):
+class TicketsRequest(BaseModel):
+    tickets: list[list[int]]
+
+
+def _validate_tickets(tickets: list[list[int]]) -> None:
+    if not (1 <= len(tickets) <= 50):
         raise HTTPException(status_code=400, detail="확인할 조합은 1~50개여야 합니다")
-    for numbers in req.tickets:
+    for numbers in tickets:
         if len(numbers) != 6 or len(set(numbers)) != 6 or not all(1 <= n <= 45 for n in numbers):
             raise HTTPException(status_code=400, detail="각 조합은 1~45 사이의 서로 다른 번호 6개여야 합니다")
+
+
+@app.post("/api/check")
+def api_check(req: CheckRequest) -> dict:
+    _validate_tickets(req.tickets)
     draw = get_draw(req.round)
     if draw is None:
         detail = f"{req.round}회 결과가 없습니다" if req.round else "수집된 회차가 없습니다"
         raise HTTPException(status_code=404, detail=detail)
     return {"draw": draw, "results": check_tickets(req.tickets, draw)}
+
+
+@app.post("/api/history")
+def api_history(req: TicketsRequest) -> dict:
+    """조합마다 역대 모든 회차에 샀다면 몇 번 당첨됐을지와 최고 일치 기록."""
+    _validate_tickets(req.tickets)
+    return ticket_history(req.tickets)
 
 
 @app.get("/api/stats")

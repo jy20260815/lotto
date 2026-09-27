@@ -167,13 +167,16 @@ function loadCart() {
   if (!Array.isArray(parsed) || !parsed.every(item => Array.isArray(item))) return [];
   return parsed;
 }
-function loadTodayPick() {
+function loadTodayPicks() {
+  // 이전 버전은 오늘의 번호를 조합 하나([..6개..])로 저장했다. 여러 개([[..], [..]])로 옮긴다.
   const parsed = loadJson(TODAY_KEY, null);
-  return Array.isArray(parsed) ? parsed : null;
+  if (!Array.isArray(parsed)) return [];
+  if (parsed.length && parsed.every(n => typeof n === "number")) return [parsed];
+  return parsed.filter(item => Array.isArray(item) && item.length === 6);
 }
 
 let cart = loadCart();
-let todayPick = loadTodayPick();
+let todayPicks = loadTodayPicks();
 const cartBadge = $("cart-badge");
 
 function comboKey(numbers) {
@@ -188,8 +191,18 @@ function persistCart() {
   cartBadge.textContent = cart.length;
   document.querySelectorAll(".cart-btn[data-numbers]").forEach(updateCartBtn);
 }
-function persistTodayPick() {
-  storageSet(TODAY_KEY, JSON.stringify(todayPick));
+function persistTodayPicks() {
+  storageSet(TODAY_KEY, JSON.stringify(todayPicks));
+}
+function isTodayPick(numbers) {
+  const key = comboKey(numbers);
+  return todayPicks.some(p => comboKey(p) === key);
+}
+function toggleTodayPick(numbers) {
+  const key = comboKey(numbers);
+  if (isTodayPick(numbers)) todayPicks = todayPicks.filter(p => comboKey(p) !== key);
+  else todayPicks.push(sortNums(numbers));
+  persistTodayPicks();
 }
 function updateCartBtn(btn) {
   const inCart = findCartIndex(btn.dataset.numbers.split(",").map(Number)) !== -1;
@@ -202,17 +215,14 @@ function toggleCombo(numbers) {
     cart.push(sortNums(numbers));
   } else {
     cart.splice(idx, 1);
-    if (todayPick && comboKey(todayPick) === comboKey(numbers)) {
-      todayPick = null;
-      persistTodayPick();
-    }
+    if (isTodayPick(numbers)) toggleTodayPick(numbers);
   }
   persistCart();
 }
 cartBadge.textContent = cart.length;
 
 function buildCartCard(numbers) {
-  const isToday = todayPick && comboKey(todayPick) === comboKey(numbers);
+  const isToday = isTodayPick(numbers);
   const card = el("div", "card result-card");
   card.style.setProperty("--cat", "var(--neutral)");
 
@@ -220,11 +230,10 @@ function buildCartCard(numbers) {
   headerRow.appendChild(el("div", "combo-title", isToday ? "오늘의 번호" : "담은 조합"));
   const actions = el("div", "card-actions");
 
-  const todayBtn = el("button", "small-btn" + (isToday ? " active" : ""), isToday ? "선택 해제" : "오늘의 번호로");
+  const todayBtn = el("button", "small-btn" + (isToday ? " active" : ""), isToday ? "오늘의 번호 해제" : "오늘의 번호로");
   todayBtn.type = "button";
   todayBtn.addEventListener("click", () => {
-    todayPick = isToday ? null : [...numbers];
-    persistTodayPick();
+    toggleTodayPick(numbers);
     renderCart();
   });
   const copyBtn = el("button", "small-btn", "복사");
@@ -255,21 +264,191 @@ function renderCart() {
     cart.forEach(numbers => list.appendChild(buildCartCard(numbers)));
   }
 
-  const todayEl = $("today-pick");
-  todayEl.replaceChildren();
-  if (!todayPick) {
-    todayEl.appendChild(el("p", "empty-msg", '담은 조합 중 하나를 "오늘의 번호로" 선택해보세요.'));
+  renderTodayPicks();
+}
+
+/* ---------- 오늘의 나의 번호 (여러 개) ---------- */
+const historyCache = new Map(); // comboKey -> /api/history 결과 한 건
+let historyMeta = null; // { total_draws, latest }
+
+async function ensureHistory(picks) {
+  const missing = picks.filter(p => !historyCache.has(comboKey(p)));
+  if (!missing.length) return;
+  const data = await api("/api/history", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tickets: missing }),
+  });
+  historyMeta = { total_draws: data.total_draws, latest: data.latest };
+  data.results.forEach(r => historyCache.set(comboKey(r.numbers), r));
+}
+
+function comboTraits(numbers) {
+  const sum = numbers.reduce((a, b) => a + b, 0);
+  const odd = numbers.filter(n => n % 2).length;
+  const consecutive = numbers.slice(1).filter((n, i) => n - numbers[i] === 1).length;
+  const bands = [0, 0, 0, 0, 0];
+  numbers.forEach(n => { bands[Math.floor(n / 10)] += 1; });
+  const bandNames = ["1~9", "10번대", "20번대", "30번대", "40번대"];
+  const bandText = bands.map((c, i) => (c ? `${bandNames[i]} ${c}개` : null)).filter(Boolean).join(" · ");
+  return { sum, odd, consecutive, bandText };
+}
+
+function buildTodayCard(numbers, index) {
+  const card = el("div", "card result-card today-card");
+  card.style.setProperty("--cat", "var(--accent)");
+
+  const headerRow = el("div", "card-header-row");
+  headerRow.appendChild(el("div", "combo-title", `오늘의 번호 ${index + 1}`));
+  const actions = el("div", "card-actions");
+  const copyBtn = el("button", "small-btn", "복사");
+  copyBtn.type = "button";
+  copyBtn.addEventListener("click", () => copyText(numbers.join(", "), copyBtn, "복사됨!", "복사"));
+  const removeBtn = el("button", "small-btn", "빼기");
+  removeBtn.type = "button";
+  removeBtn.addEventListener("click", () => {
+    toggleTodayPick(numbers);
+    renderCart();
+  });
+  actions.append(copyBtn, removeBtn);
+  headerRow.appendChild(actions);
+  card.appendChild(headerRow);
+
+  const balls = el("div", "balls");
+  numbers.forEach(n => balls.appendChild(ball(n, ballColorClass(n))));
+  card.appendChild(balls);
+
+  card.append(...todaySummaryNodes(numbers));
+  return card;
+}
+
+/* 오늘의 번호 설명(태그 + 문장). 화면 카드와 PDF 인쇄본이 같이 쓴다. */
+function todaySummary(numbers) {
+  const t = comboTraits(numbers);
+  const tags = [
+    `합계 ${t.sum}${t.sum >= 100 && t.sum <= 170 ? " (평균권)" : ""}`,
+    `홀${t.odd}:짝${6 - t.odd}`,
+    t.consecutive ? `연속번호 ${t.consecutive}쌍` : "연속번호 없음",
+  ];
+  const lines = [`번호대: ${t.bandText}`];
+  const history = historyCache.get(comboKey(numbers));
+  if (!history || !historyMeta) return { tags, lines, loading: true };
+
+  const wins = [1, 2, 3, 4, 5].filter(r => history.ranks[r]).map(r => `${r}등 ${history.ranks[r]}번`);
+  lines.push(`역대 ${fmtInt(historyMeta.total_draws)}회에 매번 이 번호를 샀다면 ` +
+    (wins.length ? wins.join(" · ") + " 당첨" : "5등 이상은 한 번도 없음"));
+  const rounds = history.best_rounds.map(r => `${r}회`).join(", ");
+  const more = history.best_match_count > history.best_rounds.length ? " 등" : "";
+  lines.push(`가장 많이 맞았을 때 ${history.best_match}개 일치` +
+    (history.best_match_count > 1 ? ` (${history.best_match_count}번: ${rounds}${more})` : ` (${rounds})`));
+  lines.push(history.latest_overlap
+    ? `직전 ${historyMeta.latest.round}회 당첨번호와 ${history.latest_overlap}개 겹침`
+    : `직전 ${historyMeta.latest.round}회 당첨번호와 겹치는 번호 없음`);
+  return { tags, lines, loading: false };
+}
+
+function todaySummaryNodes(numbers) {
+  const summary = todaySummary(numbers);
+  const tags = el("div", "tag-row today-tags");
+  summary.tags.forEach(text => tags.appendChild(el("span", "pill-tag", text)));
+  const desc = el("ul", "today-desc");
+  summary.lines.forEach(text => desc.appendChild(el("li", null, text)));
+  if (summary.loading) desc.appendChild(el("li", "muted", "역대 기록을 불러오는 중입니다..."));
+  return [tags, desc];
+}
+
+/* ---------- 오늘의 번호 PDF 저장 (브라우저 인쇄 → "PDF로 저장") ---------- */
+function todayDateLabel() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+async function preparePrintSheet() {
+  await ensureHistory(todayPicks);
+  document.querySelector(".print-sheet")?.remove();
+
+  const sheet = el("div", "print-sheet");
+  sheet.appendChild(el("h1", null, "오늘의 나의 로또 번호"));
+  const basis = historyMeta ? ` · ${historyMeta.latest.round}회(${historyMeta.latest.draw_date})까지 기준` : "";
+  sheet.appendChild(el("p", "print-meta", `${todayDateLabel()} 작성 · ${todayPicks.length}개 조합${basis}`));
+
+  todayPicks.forEach((numbers, i) => {
+    const item = el("section", "print-item");
+    const head = el("div", "print-item-head");
+    head.appendChild(el("span", "print-index", `${i + 1}`));
+    const balls = el("div", "balls");
+    numbers.forEach(n => balls.appendChild(ball(n, ballColorClass(n))));
+    head.appendChild(balls);
+    item.appendChild(head);
+    item.append(...todaySummaryNodes(numbers));
+    sheet.appendChild(item);
+  });
+
+  sheet.appendChild(el("p", "print-note",
+    "로또는 무작위 추첨이라 과거 기록은 다음 회차 당첨 확률에 영향을 주지 않습니다. 모든 조합의 당첨 확률은 같습니다."));
+  document.body.appendChild(sheet);
+  return sheet;
+}
+
+async function saveTodayPdf(btn) {
+  btn.disabled = true;
+  try {
+    await preparePrintSheet();
+  } catch (err) {
+    alert("PDF 준비 실패: " + err.message);
+    btn.disabled = false;
     return;
   }
-  const card = el("div", "card");
-  const balls = el("div", "balls");
-  todayPick.forEach(n => balls.appendChild(ball(n, ballColorClass(n))));
-  const copyBtn = el("button", "small-btn", "오늘의 번호 복사");
-  copyBtn.type = "button";
-  copyBtn.style.marginTop = "0.8rem";
-  copyBtn.addEventListener("click", () => copyText(todayPick.join(", "), copyBtn, "복사됨!", "오늘의 번호 복사"));
-  card.append(balls, copyBtn);
-  todayEl.appendChild(card);
+  // 인쇄 창의 "PDF로 저장" 기본 파일 이름은 문서 제목을 따른다.
+  const prevTitle = document.title;
+  document.title = `오늘의 로또 번호 ${todayDateLabel()}`;
+  document.body.classList.add("printing");
+  const cleanup = () => {
+    document.body.classList.remove("printing");
+    document.title = prevTitle;
+    document.querySelector(".print-sheet")?.remove();
+    btn.disabled = false;
+  };
+  window.addEventListener("afterprint", cleanup, { once: true });
+  window.print();
+}
+
+let todayRenderId = 0;
+async function renderTodayPicks() {
+  const todayEl = $("today-pick");
+  todayEl.replaceChildren();
+  if (!todayPicks.length) {
+    todayEl.appendChild(el("p", "empty-msg", '담은 조합에서 "오늘의 번호로"를 눌러 원하는 만큼 골라보세요.'));
+    return;
+  }
+
+  const head = el("div", "today-head");
+  head.appendChild(el("span", "muted", `${todayPicks.length}개 선택됨`));
+  const copyAll = el("button", "small-btn", "전체 복사");
+  copyAll.type = "button";
+  copyAll.addEventListener("click", () => copyText(
+    todayPicks.map((p, i) => `${i + 1}) ${p.join(", ")}`).join("\n"), copyAll, "복사됨!", "전체 복사"));
+  const pdfBtn = el("button", "small-btn", "PDF로 저장");
+  pdfBtn.type = "button";
+  pdfBtn.addEventListener("click", () => saveTodayPdf(pdfBtn));
+  const headActions = el("div", "card-actions");
+  headActions.append(copyAll, pdfBtn);
+  head.appendChild(headActions);
+  todayEl.appendChild(head);
+
+  const list = el("div", "stack");
+  const draw = () => list.replaceChildren(...todayPicks.map((p, i) => buildTodayCard(p, i)));
+  draw();
+  todayEl.appendChild(list);
+
+  const renderId = ++todayRenderId;
+  try {
+    await ensureHistory(todayPicks);
+    if (renderId === todayRenderId) draw();
+  } catch (err) {
+    if (renderId === todayRenderId) list.appendChild(el("p", "form-error", "역대 기록을 불러오지 못했습니다: " + err.message));
+  }
 }
 tabLoaders.cart = renderCart;
 
