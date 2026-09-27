@@ -9,7 +9,11 @@
 - 동행복권 회차별 당첨 번호 수집 및 SQLite 저장
 - 전체 회차와 최근 100회 기준 번호별 출현 통계 계산
 - 여섯 가지 규칙을 이용한 번호 조합 생성
-- 생성 개수 선택, 조합 복사, 장바구니, 오늘의 번호, 다크 모드를 제공하는 웹 UI
+- 고정수·제외수·홀짝 비율·합계 범위 조건을 건 번호 생성
+- 회차별 당첨 결과 조회와 직접 입력한 번호·장바구니 조합의 당첨 확인(1~5등)
+- 번호별 출현 빈도, 홀짝·구간·합계 분포 차트 (전체/최근 100·50·20회)
+- 규칙별 백테스트: 과거 각 회차 이전 데이터만으로 번호를 만들어 실제 결과와 비교
+- 생성 개수 선택, 조합 복사, 장바구니, 오늘의 번호, 다크 모드를 제공하는 모바일 대응 웹 UI
 - 번호 생성 및 데이터 검증용 CLI 스크립트
 
 ## 번호 생성 규칙
@@ -96,16 +100,42 @@ py scripts/generate_numbers.py
 | --- | --- | --- |
 | `rule` | `independent` | 번호 생성 규칙 |
 | `count` | `5` | 생성할 조합 수(1~20) |
+| `include` | 없음 | 반드시 포함할 번호, 쉼표 구분(최대 5개) |
+| `exclude` | 없음 | 제외할 번호, 쉼표 구분 |
+| `odd` | 없음 | 홀수 개수(0~6) |
+| `sum_min`, `sum_max` | `21`, `255` | 번호 6개 합계 범위 |
+
+고정수는 규칙이 뽑은 번호 중 일부를 대체하고, 조건을 만족할 수 없으면 `422`를 반환합니다.
 
 예시:
 
 ```text
-GET /api/generate?rule=biased&count=5
+GET /api/generate?rule=biased&count=5&include=7&exclude=1,2&odd=3&sum_min=100&sum_max=170
 ```
 
 ### `GET /api/weekly`
 
 여섯 가지 규칙에서 각각 한 조합씩 생성합니다.
+
+### `GET /api/draws`, `GET /api/draws/latest`, `GET /api/draws/{round}`
+
+최근 회차 목록(`limit`, 기본 10), 최신 회차, 특정 회차의 당첨 번호와 보너스 번호를 반환합니다.
+
+### `POST /api/check`
+
+조합들의 당첨 등수를 확인합니다. `round`를 생략하면 최신 회차 기준입니다.
+
+```json
+{"tickets": [[3, 11, 19, 27, 34, 42]], "round": 1241}
+```
+
+### `GET /api/stats`
+
+번호별 출현 횟수와 미출현 기간, 홀짝·구간·합계 분포를 반환합니다. `window=0`은 전체 회차, 양수는 최근 N회차입니다.
+
+### `GET /api/backtest`
+
+최근 `rounds`회(10~300)의 각 회차에 대해 그 이전 데이터만으로 규칙마다 `tickets`개(1~10)씩 생성해 결과를 맞춰보고, 무작위 선택 및 이론 기댓값과 비교합니다. `seed`를 주면 결과가 재현됩니다.
 
 FastAPI가 제공하는 대화형 API 문서는 서버 실행 후 <http://127.0.0.1:8000/docs>에서 확인할 수 있습니다.
 
@@ -120,12 +150,24 @@ FastAPI가 제공하는 대화형 API 문서는 서버 실행 후 <http://127.0.
 │   ├── collect.py            # 전체 회차 수집
 │   ├── db.py                 # DB 연결 및 스키마
 │   ├── fetch.py              # 동행복권 HTTP 요청
-│   ├── generate.py           # 번호 생성 규칙
-│   ├── stats.py              # 전체·최근 출현 통계
-│   ├── templates.py          # 웹 UI 템플릿
+│   ├── generate.py           # 번호 생성 규칙과 생성 조건
+│   ├── stats.py              # 전체·최근 출현 통계 (DB 테이블 갱신)
+│   ├── analysis.py           # 통계 탭용 분포 요약
+│   ├── check.py              # 회차 조회와 당첨 등수 계산
+│   ├── backtest.py           # 규칙별 백테스트
+│   ├── static/               # 웹 UI (index.html, app.css, app.js)
 │   └── web.py                # FastAPI 앱과 API
 ├── scripts/                  # 실행·수집·검증 스크립트
+├── tests/                    # unittest 테스트
 └── requirements.txt
+```
+
+## 테스트
+
+추가 패키지 없이 표준 `unittest`로 실행합니다. 저장소의 `data/lotto.db`를 읽기 전용으로 사용합니다.
+
+```powershell
+py -m unittest discover tests
 ```
 
 ## 데이터 갱신 흐름

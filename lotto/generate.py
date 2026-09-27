@@ -1,4 +1,5 @@
 import random
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .db import get_connection
@@ -8,67 +9,151 @@ HIGH_POOL_SIZE = 15
 LOW_POOL_SIZE = 15
 POPULARITY_SAMPLE_SIZE = 300
 LUCKY_NUMBERS = {3, 7, 8}
+CONSTRAINT_MAX_ATTEMPTS = 500
+MIN_SUM = sum(range(1, 7))
+MAX_SUM = sum(range(40, 46))
 
 SlotRule = Literal["independent", "fixed", "all_high", "all_low", "biased", "unpopular"]
+VALID_RULES: tuple[str, ...] = ("independent", "fixed", "all_high", "all_low", "biased", "unpopular")
 
 
-def _load_pools(conn, table: str = "number_stats"):
-    rows = conn.execute(f"SELECT number, ratio FROM {table} ORDER BY ratio DESC").fetchall()
-    if len(rows) < HIGH_POOL_SIZE + LOW_POOL_SIZE:
-        raise RuntimeError(f"{table}가 비어있거나 부족합니다. 먼저 데이터 수집을 실행하세요.")
-    high_pool = rows[:HIGH_POOL_SIZE]
-    low_pool = rows[-LOW_POOL_SIZE:]
-    return high_pool, low_pool
+class GenerationError(ValueError):
+    """사용자가 준 조건(고정수·제외수·홀짝·합계)으로는 조합을 만들 수 없을 때."""
 
 
-def _rank_lookup(conn, table: str) -> dict[int, int]:
-    rows = conn.execute(f"SELECT number FROM {table} ORDER BY ratio DESC").fetchall()
-    return {row["number"]: idx + 1 for idx, row in enumerate(rows)}
+@dataclass
+class Snapshot:
+    """번호 생성에 필요한 통계를 메모리에 올려둔 것. 백테스트는 과거 특정 회차
+    직전까지의 draws만으로 이 스냅샷을 만들어, 미래 데이터를 보지 않고 생성한다."""
+
+    alltime: list[dict]  # [{"number", "ratio"}] 출현비율 내림차순
+    recent: list[dict]  # 최근 window회 기준, 같은 형식
+    prev_draw: set[int]
+
+    @property
+    def alltime_ratio(self) -> dict[int, float]:
+        return {row["number"]: row["ratio"] for row in self.alltime}
 
 
-def _ratio_lookup(conn, table: str = "number_stats") -> dict[int, float]:
-    rows = conn.execute(f"SELECT number, ratio FROM {table}").fetchall()
-    return {row["number"]: row["ratio"] for row in rows}
+@dataclass
+class Constraints:
+    include: set[int] = field(default_factory=set)
+    exclude: set[int] = field(default_factory=set)
+    odd_count: int | None = None
+    sum_min: int = MIN_SUM
+    sum_max: int = MAX_SUM
+
+    def validate(self) -> None:
+        for n in self.include | self.exclude:
+            if not 1 <= n <= 45:
+                raise GenerationError("번호는 1~45 사이여야 합니다")
+        if self.include & self.exclude:
+            overlap = ", ".join(str(n) for n in sorted(self.include & self.exclude))
+            raise GenerationError(f"고정수와 제외수에 같은 번호가 있습니다: {overlap}")
+        if len(self.include) > 5:
+            raise GenerationError("고정수는 최대 5개까지 지정할 수 있습니다")
+        if 45 - len(self.exclude) < 6:
+            raise GenerationError("제외수가 너무 많아 6개를 고를 수 없습니다")
+        if self.sum_min > self.sum_max:
+            raise GenerationError("합계 최솟값이 최댓값보다 큽니다")
+        if self.odd_count is not None:
+            if not 0 <= self.odd_count <= 6:
+                raise GenerationError("홀수 개수는 0~6 사이여야 합니다")
+            fixed_odd = sum(1 for n in self.include if n % 2)
+            fixed_even = len(self.include) - fixed_odd
+            if fixed_odd > self.odd_count or fixed_even > 6 - self.odd_count:
+                raise GenerationError("고정수의 홀짝 구성이 지정한 홀짝 비율과 맞지 않습니다")
+
+    def accepts(self, numbers: list[int]) -> bool:
+        if self.odd_count is not None and sum(1 for n in numbers if n % 2) != self.odd_count:
+            return False
+        return self.sum_min <= sum(numbers) <= self.sum_max
+
+    @property
+    def is_empty(self) -> bool:
+        return (
+            not self.include
+            and not self.exclude
+            and self.odd_count is None
+            and self.sum_min <= MIN_SUM
+            and self.sum_max >= MAX_SUM
+        )
 
 
-def _previous_draw_numbers(conn) -> set[int]:
-    row = conn.execute(
-        "SELECT num1, num2, num3, num4, num5, num6 FROM draws ORDER BY round DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
-        return set()
-    return {row[f"num{i}"] for i in range(1, 7)}
+def _ranked(counts: dict[int, int], total: int) -> list[dict]:
+    rows = [{"number": n, "ratio": counts.get(n, 0) / total} for n in range(1, 46)]
+    rows.sort(key=lambda r: (-r["ratio"], r["number"]))
+    return rows
 
 
-def _pick(pool, count, exclude):
+def snapshot_from_draws(draws: list[list[int]], window: int = DEFAULT_RECENT_WINDOW) -> Snapshot:
+    """draws는 회차 오름차순으로 정렬된 당첨번호 6개 리스트들."""
+    if not draws:
+        raise RuntimeError("draws가 비어있습니다. 먼저 데이터 수집을 실행하세요.")
+    alltime_counts: dict[int, int] = {}
+    for nums in draws:
+        for n in nums:
+            alltime_counts[n] = alltime_counts.get(n, 0) + 1
+    recent_draws = draws[-window:]
+    recent_counts: dict[int, int] = {}
+    for nums in recent_draws:
+        for n in nums:
+            recent_counts[n] = recent_counts.get(n, 0) + 1
+    return Snapshot(
+        alltime=_ranked(alltime_counts, len(draws)),
+        recent=_ranked(recent_counts, len(recent_draws)),
+        prev_draw=set(draws[-1]),
+    )
+
+
+def load_draw_numbers(conn) -> list[list[int]]:
+    rows = conn.execute("SELECT num1, num2, num3, num4, num5, num6 FROM draws ORDER BY round").fetchall()
+    return [[row[f"num{i}"] for i in range(1, 7)] for row in rows]
+
+
+def load_snapshot() -> Snapshot:
+    conn = get_connection()
+    try:
+        return snapshot_from_draws(load_draw_numbers(conn))
+    finally:
+        conn.close()
+
+
+def _pools(ranked: list[dict]) -> tuple[list[dict], list[dict]]:
+    return ranked[:HIGH_POOL_SIZE], ranked[-LOW_POOL_SIZE:]
+
+
+def _pick(pool, count, exclude, rng):
     candidates = [row for row in pool if row["number"] not in exclude]
-    chosen = random.sample(candidates, count)
+    if len(candidates) < count:
+        raise GenerationError("제외수 때문에 이 규칙의 번호 풀이 부족합니다. 제외수를 줄이거나 다른 규칙을 골라보세요.")
+    chosen = rng.sample(candidates, count)
     exclude.update(row["number"] for row in chosen)
     return chosen
 
 
-def _compose_3_2_1(high_pool, low_pool, exclude, swing_mode, labels):
+def _compose_3_2_1(high_pool, low_pool, exclude, swing_mode, labels, rng):
     """고확률 3(고정) + 변동 슬롯 2 + 저확률 1(고정) 구성.
     swing_mode="independent": 슬롯마다 독립적으로 50% 확률로 고/저 선택.
     swing_mode="fixed": 변동 슬롯을 고확률 1 + 저확률 1로 고정."""
     picks: list[dict] = []
 
-    for row in _pick(high_pool, 3, exclude):
+    for row in _pick(high_pool, 3, exclude, rng):
         picks.append({"number": row["number"], "ratio": row["ratio"], "source": labels["high_fixed"]})
 
     if swing_mode == "independent":
         for _ in range(2):
             pool, label = (
-                (high_pool, labels["high_swing"]) if random.random() < 0.5 else (low_pool, labels["low_swing"])
+                (high_pool, labels["high_swing"]) if rng.random() < 0.5 else (low_pool, labels["low_swing"])
             )
-            row = _pick(pool, 1, exclude)[0]
+            row = _pick(pool, 1, exclude, rng)[0]
             picks.append({"number": row["number"], "ratio": row["ratio"], "source": label})
     else:
         for pool, label in ((high_pool, labels["high_swing"]), (low_pool, labels["low_swing"])):
-            row = _pick(pool, 1, exclude)[0]
+            row = _pick(pool, 1, exclude, rng)[0]
             picks.append({"number": row["number"], "ratio": row["ratio"], "source": label})
 
-    for row in _pick(low_pool, 1, exclude):
+    for row in _pick(low_pool, 1, exclude, rng):
         picks.append({"number": row["number"], "ratio": row["ratio"], "source": labels["low_fixed"]})
 
     return picks
@@ -124,62 +209,55 @@ def _popularity_score(numbers: list[int], prev_draw: set[int]) -> tuple[int, lis
     return score, traits
 
 
-def _generate_unpopular_combination(ratio_lookup: dict[int, float], prev_draw: set[int]) -> dict:
+def _generate_unpopular_combination(snapshot: Snapshot, constraints: Constraints, rng) -> dict:
+    fixed = sorted(constraints.include)
+    allowed = [n for n in range(1, 46) if n not in constraints.exclude and n not in constraints.include]
     best: tuple[int, list[int], list[str]] | None = None
-    for _ in range(POPULARITY_SAMPLE_SIZE):
-        candidate = sorted(random.sample(range(1, 46), 6))
-        score, traits = _popularity_score(candidate, prev_draw)
+    valid_samples = 0
+    for _ in range(POPULARITY_SAMPLE_SIZE * 20):
+        candidate = sorted(fixed + rng.sample(allowed, 6 - len(fixed)))
+        if not constraints.accepts(candidate):
+            continue
+        score, traits = _popularity_score(candidate, snapshot.prev_draw)
         if best is None or score < best[0]:
             best = (score, candidate, traits)
+        valid_samples += 1
+        if valid_samples >= POPULARITY_SAMPLE_SIZE:
+            break
+
+    if best is None:
+        raise GenerationError("조건을 만족하는 조합을 찾지 못했습니다. 홀짝·합계 조건을 완화해보세요.")
 
     _, numbers, traits = best
+    ratio_lookup = snapshot.alltime_ratio
     detail = [
-        {"number": n, "ratio": ratio_lookup.get(n, 0.0), "source": "저인기 조합 구성 번호"} for n in numbers
+        {
+            "number": n,
+            "ratio": ratio_lookup.get(n, 0.0),
+            "source": "고정수(직접 지정)" if n in constraints.include else "저인기 조합 구성 번호",
+        }
+        for n in numbers
     ]
     return {"slot_rule": "unpopular", "numbers": numbers, "traits": traits, "detail": detail}
 
 
-def generate_combination(slot_rule: SlotRule = "independent") -> dict:
-    """당첨번호 6개 조합을 만든다.
-    - "independent"/"fixed": 전체 누적 출현빈도 상위 15(고확률)·하위 15(저확률) 풀에서
-      3(고정 고확률) + 2(변동 슬롯) + 1(고정 저확률) 구성. 변동 슬롯 규칙은 슬롯모드 참고.
-    - "all_high"/"all_low": 6개 전부 고확률 또는 저확률 풀에서 선택.
-    - "biased": 위와 같은 3:2:1 구성이지만 전체 누적 대신 최근 window회차 출현빈도
-      기준 풀을 사용 ("혹시 편향이 있다면" 가정의 실험 모드, 근거는 약함).
-    - "unpopular": 당첨 확률은 다른 조합과 동일하다. 대신 사람들이 실제로 덜 고르는
-      특징(32~45 비중, 연속/등차수열, 극단적 합계 등)을 일부러 포함시켜, 당첨 시
-      상금을 나눠 가질 인원을 줄이는 것이 목적.
-    """
-    conn = get_connection()
-    try:
-        if slot_rule == "unpopular":
-            ratio_lookup = _ratio_lookup(conn)
-            prev_draw = _previous_draw_numbers(conn)
-            return _generate_unpopular_combination(ratio_lookup, prev_draw)
-
-        if slot_rule == "biased":
-            high_pool, low_pool = _load_pools(conn, table="number_stats_recent")
-            alltime_rank = _rank_lookup(conn, "number_stats")
-            recent_rank = _rank_lookup(conn, "number_stats_recent")
-        else:
-            high_pool, low_pool = _load_pools(conn, table="number_stats")
-            alltime_rank = recent_rank = None
-    finally:
-        conn.close()
-
-    exclude: set[int] = set()
+def _rule_picks(slot_rule: str, snapshot: Snapshot, exclude: set[int], rng) -> list[dict]:
+    if slot_rule == "biased":
+        high_pool, low_pool = _pools(snapshot.recent)
+    else:
+        high_pool, low_pool = _pools(snapshot.alltime)
 
     if slot_rule == "all_high":
-        picks = [
+        return [
             {"number": r["number"], "ratio": r["ratio"], "source": "고확률(전체 6개)"}
-            for r in _pick(high_pool, 6, exclude)
+            for r in _pick(high_pool, 6, exclude, rng)
         ]
-    elif slot_rule == "all_low":
-        picks = [
+    if slot_rule == "all_low":
+        return [
             {"number": r["number"], "ratio": r["ratio"], "source": "저확률(전체 6개)"}
-            for r in _pick(low_pool, 6, exclude)
+            for r in _pick(low_pool, 6, exclude, rng)
         ]
-    elif slot_rule == "biased":
+    if slot_rule == "biased":
         picks = _compose_3_2_1(
             high_pool,
             low_pool,
@@ -191,15 +269,19 @@ def generate_combination(slot_rule: SlotRule = "independent") -> dict:
                 "high_swing": f"최근 {DEFAULT_RECENT_WINDOW}회 고빈도(변동 슬롯)",
                 "low_swing": f"최근 {DEFAULT_RECENT_WINDOW}회 저빈도(변동 슬롯)",
             },
+            rng,
         )
+        alltime_rank = {row["number"]: idx + 1 for idx, row in enumerate(snapshot.alltime)}
+        recent_rank = {row["number"]: idx + 1 for idx, row in enumerate(snapshot.recent)}
         for p in picks:
             delta = alltime_rank[p["number"]] - recent_rank[p["number"]]
             if delta > 0:
                 p["source"] += f" · 전체 누적 순위보다 {delta}계단 상승"
             elif delta < 0:
                 p["source"] += f" · 전체 누적 순위보다 {-delta}계단 하락"
-    elif slot_rule == "fixed":
-        picks = _compose_3_2_1(
+        return picks
+    if slot_rule == "fixed":
+        return _compose_3_2_1(
             high_pool,
             low_pool,
             exclude,
@@ -210,34 +292,82 @@ def generate_combination(slot_rule: SlotRule = "independent") -> dict:
                 "high_swing": "고확률(변동 슬롯, 규칙상 고정 배정)",
                 "low_swing": "저확률(변동 슬롯, 규칙상 고정 배정)",
             },
+            rng,
         )
-    else:  # independent
-        picks = _compose_3_2_1(
-            high_pool,
-            low_pool,
-            exclude,
-            "independent",
-            {
-                "high_fixed": "고확률(고정 3개 중 하나)",
-                "low_fixed": "저확률(고정 1개)",
-                "high_swing": "고확률(변동 슬롯, 50% 확률로 당첨)",
-                "low_swing": "저확률(변동 슬롯, 50% 확률로 당첨)",
-            },
-        )
-
-    picks.sort(key=lambda p: p["number"])
-    return {"slot_rule": slot_rule, "numbers": [p["number"] for p in picks], "detail": picks}
+    return _compose_3_2_1(  # independent
+        high_pool,
+        low_pool,
+        exclude,
+        "independent",
+        {
+            "high_fixed": "고확률(고정 3개 중 하나)",
+            "low_fixed": "저확률(고정 1개)",
+            "high_swing": "고확률(변동 슬롯, 50% 확률로 당첨)",
+            "low_swing": "저확률(변동 슬롯, 50% 확률로 당첨)",
+        },
+        rng,
+    )
 
 
-def generate_combinations(slot_rule: SlotRule = "independent", count: int = 5) -> list[dict]:
+def generate_combination(
+    slot_rule: SlotRule = "independent",
+    snapshot: Snapshot | None = None,
+    constraints: Constraints | None = None,
+    rng: random.Random | None = None,
+) -> dict:
+    """당첨번호 6개 조합을 만든다.
+    - "independent"/"fixed": 전체 누적 출현빈도 상위 15(고확률)·하위 15(저확률) 풀에서
+      3(고정 고확률) + 2(변동 슬롯) + 1(고정 저확률) 구성. 변동 슬롯 규칙은 슬롯모드 참고.
+    - "all_high"/"all_low": 6개 전부 고확률 또는 저확률 풀에서 선택.
+    - "biased": 위와 같은 3:2:1 구성이지만 전체 누적 대신 최근 window회차 출현빈도
+      기준 풀을 사용 ("혹시 편향이 있다면" 가정의 실험 모드, 근거는 약함).
+    - "unpopular": 당첨 확률은 다른 조합과 동일하다. 대신 사람들이 실제로 덜 고르는
+      특징(32~45 비중, 연속/등차수열, 극단적 합계 등)을 일부러 포함시켜, 당첨 시
+      상금을 나눠 가질 인원을 줄이는 것이 목적.
+
+    constraints가 있으면 제외수는 풀에서 빼고, 고정수는 규칙이 뽑은 번호 중 일부를
+    무작위로 대체하며, 홀짝·합계 조건은 만족할 때까지 다시 뽑는다.
+    """
+    snapshot = snapshot or load_snapshot()
+    constraints = constraints or Constraints()
+    rng = rng or random
+
+    if slot_rule == "unpopular":
+        return _generate_unpopular_combination(snapshot, constraints, rng)
+
+    ratio_lookup = snapshot.alltime_ratio
+    for _ in range(CONSTRAINT_MAX_ATTEMPTS):
+        picks = _rule_picks(slot_rule, snapshot, set(constraints.exclude | constraints.include), rng)
+        if constraints.include:
+            keep = rng.sample(picks, 6 - len(constraints.include))
+            picks = keep + [
+                {"number": n, "ratio": ratio_lookup.get(n, 0.0), "source": "고정수(직접 지정)"}
+                for n in constraints.include
+            ]
+        numbers = sorted(p["number"] for p in picks)
+        if constraints.accepts(numbers):
+            picks.sort(key=lambda p: p["number"])
+            return {"slot_rule": slot_rule, "numbers": numbers, "detail": picks}
+
+    raise GenerationError("조건을 만족하는 조합을 찾지 못했습니다. 홀짝·합계 조건을 완화하거나 다른 규칙을 골라보세요.")
+
+
+def generate_combinations(
+    slot_rule: SlotRule = "independent",
+    count: int = 5,
+    snapshot: Snapshot | None = None,
+    constraints: Constraints | None = None,
+    rng: random.Random | None = None,
+) -> list[dict]:
     """서로 다른 조합 count개를 생성한다 (중복 조합은 걸러내고 다시 뽑음)."""
+    snapshot = snapshot or load_snapshot()
     results: list[dict] = []
     seen: set[tuple[int, ...]] = set()
     max_attempts = count * 20
     attempts = 0
     while len(results) < count and attempts < max_attempts:
         attempts += 1
-        result = generate_combination(slot_rule)
+        result = generate_combination(slot_rule, snapshot, constraints, rng)
         key = tuple(result["numbers"])
         if key in seen:
             continue

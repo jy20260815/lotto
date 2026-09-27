@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로또 번호 생성기</title>
+<script>
+  // 첫 렌더 전에 테마를 적용해 깜빡임을 막는다.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem("lotto_theme"); } catch (e) {}
+    if (theme !== "light" && theme !== "dark") {
+      theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+  <header class="header-row">
+    <div>
+      <h1>로또 번호 생성기</h1>
+      <p class="subtitle" id="data-status">역대 회차 출현 빈도 기반 실험용 번호 생성기</p>
+    </div>
+    <button class="ghost-btn" id="theme-toggle" type="button">라이트 모드</button>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="메뉴">
+    <button class="tab" role="tab" type="button" data-tab="generate" aria-selected="true">번호 생성</button>
+    <button class="tab" role="tab" type="button" data-tab="check" aria-selected="false">당첨 확인</button>
+    <button class="tab" role="tab" type="button" data-tab="stats" aria-selected="false">통계</button>
+    <button class="tab" role="tab" type="button" data-tab="backtest" aria-selected="false">백테스트</button>
+    <button class="tab" role="tab" type="button" data-tab="cart" aria-selected="false">장바구니 <span class="badge" id="cart-badge">0</span></button>
+  </nav>
+
+  <!-- ================= 번호 생성 ================= -->
+  <section class="panel" id="panel-generate" role="tabpanel">
+    <h2 class="section-title">빠른 생성</h2>
+    <div class="quick-box">
+      <div class="chip-row" id="chip-row"></div>
+    </div>
+
+    <h2 class="section-title">직접 설정</h2>
+    <div class="card config-card">
+      <div class="field-grid">
+        <div class="field">
+          <label for="cat-select">카테고리</label>
+          <select id="cat-select"></select>
+        </div>
+        <div class="field">
+          <label for="count-select">생성 개수</label>
+          <select id="count-select">
+            <option value="1">1개</option>
+            <option value="3">3개</option>
+            <option value="5" selected>5개</option>
+            <option value="10">10개</option>
+          </select>
+        </div>
+      </div>
+
+      <details class="options" id="options">
+        <summary>세부 조건 <span class="options-summary" id="options-summary">없음</span></summary>
+        <div class="option-block">
+          <div class="option-head">
+            <span class="field-label">고정수 / 제외수</span>
+            <button class="link-btn" id="picker-reset" type="button">초기화</button>
+          </div>
+          <p class="hint">번호를 한 번 누르면 <b class="key-pinned">고정</b>, 두 번 누르면 <b class="key-excluded">제외</b>, 세 번 누르면 해제됩니다. 고정수는 최대 5개입니다.</p>
+          <div class="num-picker" id="num-picker"></div>
+        </div>
+        <div class="field-grid option-block">
+          <div class="field">
+            <label for="odd-select">홀짝 비율</label>
+            <select id="odd-select">
+              <option value="">상관없음</option>
+              <option value="0">홀0 : 짝6</option>
+              <option value="1">홀1 : 짝5</option>
+              <option value="2">홀2 : 짝4</option>
+              <option value="3">홀3 : 짝3</option>
+              <option value="4">홀4 : 짝2</option>
+              <option value="5">홀5 : 짝1</option>
+              <option value="6">홀6 : 짝0</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="sum-min">번호 합계 범위</label>
+            <div class="range-inputs">
+              <input type="number" id="sum-min" inputmode="numeric" min="21" max="255" placeholder="21" aria-label="합계 최솟값">
+              <span>~</span>
+              <input type="number" id="sum-max" inputmode="numeric" min="21" max="255" placeholder="255" aria-label="합계 최댓값">
+            </div>
+          </div>
+        </div>
+        <p class="hint">세부 조건은 "번호 생성하기"에만 적용되고, 위의 빠른 생성에는 적용되지 않습니다.</p>
+      </details>
+
+      <button class="cta-btn" id="cta-btn" type="button">번호 생성하기</button>
+      <p class="form-error" id="gen-error" role="alert"></p>
+    </div>
+
+    <h2 class="section-title">생성된 조합</h2>
+    <div id="results" class="stack">
+      <p class="empty-msg">위 칩을 누르거나 "번호 생성하기"를 눌러 조합을 만들어보세요.</p>
+    </div>
+
+    <details class="card info-box">
+      <summary>카테고리별 설명 보기</summary>
+      <div id="info-list"></div>
+    </details>
+
+    <footer class="notes">
+      <p>
+        고확률/저확률 = 역대 출현빈도 상위·하위 15개 번호 풀입니다.
+        로또는 완전 무작위 추첨이라 과거 출현 빈도는 다음 회차 당첨 확률에 통계적으로
+        영향을 주지 않습니다. 이 도구는 실험/재미 목적입니다.
+      </p>
+      <p>
+        편향 가정 모드: 최근 100회차에 가중치를 준 실험적 모드로, 지금까지 이 프로젝트
+        데이터로는 유의미한 편향이 발견되지 않았습니다. 근거가 약한 실험 모드입니다.
+      </p>
+      <p>
+        비인기 조합 모드: 이 조합은 당첨 확률을 높이지 않습니다. 모든 조합의 당첨 확률은
+        동일합니다. 다만 다른 사람이 이 조합을 고를 가능성이 낮아서, 당첨 시 상금을 나눠
+        가질 인원이 줄어들 수 있다는 것이 이 모드의 목적입니다.
+      </p>
+    </footer>
+  </section>
+
+  <!-- ================= 당첨 확인 ================= -->
+  <section class="panel" id="panel-check" role="tabpanel" hidden>
+    <div class="card">
+      <div class="draw-nav">
+        <button class="ghost-btn" id="draw-prev" type="button" aria-label="이전 회차">‹</button>
+        <div class="draw-title">
+          <input type="number" id="draw-round" inputmode="numeric" min="1" aria-label="회차">
+          <span>회</span>
+          <span class="muted" id="draw-date"></span>
+        </div>
+        <button class="ghost-btn" id="draw-next" type="button" aria-label="다음 회차">›</button>
+      </div>
+      <div class="balls draw-balls" id="draw-balls"></div>
+    </div>
+
+    <h2 class="section-title">번호 입력해서 확인</h2>
+    <div class="card">
+      <label class="field-label" for="manual-input">번호 6개를 쉼표나 공백으로 구분해 입력하세요</label>
+      <div class="inline-form">
+        <input type="text" id="manual-input" inputmode="numeric" placeholder="예: 3, 11, 19, 27, 34, 42" autocomplete="off">
+        <button class="cta-btn compact" id="manual-check" type="button">확인</button>
+      </div>
+      <p class="form-error" id="check-error" role="alert"></p>
+    </div>
+
+    <div class="section-head">
+      <h2 class="section-title">결과</h2>
+      <button class="ghost-btn small" id="cart-check" type="button">장바구니 전체 확인</button>
+    </div>
+    <div id="check-results" class="stack">
+      <p class="empty-msg">번호를 입력하거나 장바구니 전체를 확인해보세요.</p>
+    </div>
+  </section>
+
+  <!-- ================= 통계 ================= -->
+  <section class="panel" id="panel-stats" role="tabpanel" hidden>
+    <div class="segmented" id="window-filter" role="radiogroup" aria-label="분석 구간">
+      <button type="button" role="radio" data-window="0" aria-checked="true">전체</button>
+      <button type="button" role="radio" data-window="100" aria-checked="false">최근 100회</button>
+      <button type="button" role="radio" data-window="50" aria-checked="false">최근 50회</button>
+      <button type="button" role="radio" data-window="20" aria-checked="false">최근 20회</button>
+    </div>
+
+    <div id="stats-body" class="stats-body">
+      <div class="tiles" id="stat-tiles"></div>
+
+      <div class="card chart-card">
+        <h3 class="chart-title">번호별 출현 횟수</h3>
+        <p class="chart-sub" id="freq-sub"></p>
+        <div class="legend" id="freq-legend"></div>
+        <div id="chart-freq"></div>
+      </div>
+
+      <div class="card chart-card">
+        <h3 class="chart-title">홀짝 분포</h3>
+        <p class="chart-sub">회차별 당첨번호 6개 중 홀수 개수</p>
+        <div id="chart-odd"></div>
+      </div>
+
+      <div class="card chart-card">
+        <h3 class="chart-title">번호 구간별 비율</h3>
+        <p class="chart-sub">점선은 구간 크기에 따른 기대 비율입니다 (41~45는 번호가 5개라 낮음)</p>
+        <div id="chart-range"></div>
+      </div>
+
+      <div class="card chart-card">
+        <h3 class="chart-title">당첨번호 합계 분포</h3>
+        <p class="chart-sub">회차별 당첨번호 6개의 합</p>
+        <div id="chart-sum"></div>
+      </div>
+
+      <div class="card">
+        <h3 class="chart-title">최근 10회 당첨번호</h3>
+        <div id="recent-draws" class="recent-draws"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 백테스트 ================= -->
+  <section class="panel" id="panel-backtest" role="tabpanel" hidden>
+    <div class="card config-card">
+      <p class="hint top">
+        과거 각 회차마다 <b>그 회차 이전 데이터만</b> 사용해 규칙별로 번호를 만들고, 실제 결과와 맞춰봅니다.
+        모든 조합의 당첨 확률은 같기 때문에, 어떤 규칙이든 무작위 선택이나 이론 기댓값과 비슷하게 나오는 것이 정상입니다.
+      </p>
+      <div class="field-grid">
+        <div class="field">
+          <label for="bt-rounds">검증할 회차 수</label>
+          <select id="bt-rounds">
+            <option value="50">최근 50회</option>
+            <option value="100" selected>최근 100회</option>
+            <option value="200">최근 200회</option>
+            <option value="300">최근 300회</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="bt-tickets">회차당 조합 수</label>
+          <select id="bt-tickets">
+            <option value="1">1개</option>
+            <option value="5" selected>5개</option>
+            <option value="10">10개</option>
+          </select>
+        </div>
+      </div>
+      <button class="cta-btn" id="bt-run" type="button">백테스트 실행</button>
+      <p class="form-error" id="bt-error" role="alert"></p>
+    </div>
+    <div id="bt-output" class="stack"></div>
+  </section>
+
+  <!-- ================= 장바구니 ================= -->
+  <section class="panel" id="panel-cart" role="tabpanel" hidden>
+    <p class="hint top">생성 화면에서 마음에 드는 조합의 "담기" 버튼을 누르면 그 조합 전체가 여기 저장됩니다. 그중 하나를 오늘의 번호로 선택해보세요.</p>
+    <h2 class="section-title">오늘의 나의 번호</h2>
+    <div id="today-pick"></div>
+    <h2 class="section-title">담은 조합</h2>
+    <div id="cart-list" class="stack"></div>
+  </section>
+</main>
+
+<div class="tooltip" id="tooltip" role="status" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
