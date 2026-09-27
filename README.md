@@ -179,3 +179,17 @@ py -m unittest discover tests
 
 데이터 수집은 동행복권 사이트의 응답 형식과 이용 가능 여부에 영향을 받을 수 있습니다.
 
+### 자동 갱신
+
+- **수집**: GitHub Actions(`.github/workflows/update_draws.yml`)가 매주 토요일 23:30(KST)에 위 흐름을 실행하고 변경된 `data/lotto.db`를 커밋합니다.
+- **로컬 반영**: `scripts/sync_data.py`가 `git pull --ff-only`로 최신 DB를 받아옵니다. `main` 브랜치이고 커밋되지 않은 변경이 없을 때만 동작하며, 결과는 `sync_data.log`에 남습니다.
+
+로컬 동기화를 Windows 작업 스케줄러에 등록하면 매주 일요일 09:00에 실행되고, PC가 꺼져 있었다면 다음에 켜질 때 실행됩니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_sync_task.ps1   # 등록
+Unregister-ScheduledTask -TaskName "LottoDataSync" -Confirm:$false       # 삭제
+```
+
+수집은 GitHub Actions 한 곳에서만 하므로, 로컬에서 `collect_draws.py`로 DB를 따로 갱신해 커밋하면 봇의 커밋과 바이너리 충돌이 날 수 있습니다.
+
