@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from .analysis import summarize
 from .backtest import run_backtest
 from .check import check_tickets, get_draw, recent_draws
+from .simulate import simulate_purchases
 from .generate import (
     MAX_SUM,
     MIN_SUM,
@@ -158,5 +159,16 @@ def api_backtest(rounds: int = 100, tickets: int = 5, seed: int | None = None) -
         raise HTTPException(status_code=400, detail="tickets는 1~10 사이여야 합니다")
     try:
         return run_backtest(rounds, tickets, seed)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/simulate")
+def api_simulate(rounds: int = 5, seed: int | None = None) -> dict:
+    """최근 rounds회차마다 무작위 번호를 5장~1000만 장씩 샀을 때 등수별 당첨 장수."""
+    if not (1 <= rounds <= 10):
+        raise HTTPException(status_code=400, detail="rounds는 1~10 사이여야 합니다")
+    try:
+        return simulate_purchases(rounds, seed)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

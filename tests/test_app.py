@@ -107,6 +107,19 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(sum(o["count"] for o in data["odd_even"]), 100)
         self.assertEqual(sum(s["count"] for s in data["sums"]), 100)
 
+    def test_simulate(self):
+        data = self.client.get("/api/simulate?rounds=5&seed=1").json()
+        self.assertEqual(len(data["draws"]), 5)
+        amounts = [r["amount"] for r in data["results"]]
+        self.assertEqual(amounts, [5, 10, 50, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000])
+        for r in data["results"]:
+            self.assertEqual(len(r["per_round"]), 5)
+            for row in r["per_round"]:
+                self.assertLessEqual(sum(row["ranks"].values()), r["amount"])
+        big = data["results"][-1]
+        # 천만 개 x 5회면 5등이 기댓값(약 112만 개) 근처에서 나와야 한다
+        self.assertAlmostEqual(big["totals"]["5"], big["expected"]["5"], delta=big["expected"]["5"] * 0.01)
+
     def test_backtest(self):
         data = self.client.get("/api/backtest?rounds=10&tickets=2&seed=3").json()
         self.assertEqual(len(data["results"]), len(VALID_RULES) + 1)

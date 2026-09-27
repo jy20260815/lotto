@@ -63,6 +63,17 @@ function fmtInt(n) {
   return n.toLocaleString("ko-KR");
 }
 
+function fmtWon(n) {
+  if (n >= 1e8) return `${(n / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억원`;
+  if (n >= 1e4) return `${(n / 1e4).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}만원`;
+  return `${fmtInt(n)}원`;
+}
+
+function fmtAmount(n) {
+  if (n >= 1e4) return `${fmtInt(n / 1e4)}만개`;
+  return `${fmtInt(n)}개`;
+}
+
 /* 번호 공 색은 십의 자리로 구분: 1~9, 10~19, 20~29, 30~39, 40~45 */
 function ballColorClass(n) {
   return "d" + (Math.floor(n / 10) + 1);
@@ -105,6 +116,8 @@ function showTab(name) {
     panel.hidden = panel.id !== "panel-" + name;
   });
   storageSet(TAB_KEY, name);
+  const activeTab = tabButtons.find(btn => btn.dataset.tab === name);
+  if (activeTab) activeTab.scrollIntoView({ block: "nearest", inline: "nearest" });
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (tabLoaders[name]) tabLoaders[name]();
 }
@@ -878,6 +891,141 @@ document.querySelectorAll("#window-filter button").forEach(btn => {
   });
 });
 tabLoaders.stats = loadStats;
+
+/* ---------- 구매 시뮬레이션 ---------- */
+const simAmountsEl = $("sim-amounts");
+const simOutput = $("sim-output");
+const simRerun = $("sim-rerun");
+let simData = null;
+let simAmount = 5;
+
+function fmtExpected(v) {
+  if (v < 0.01) return "≈0";
+  if (v < 10) return v.toFixed(2);
+  return fmtInt(Math.round(v));
+}
+
+function simTable(headers) {
+  const wrap = el("div", "table-wrap");
+  wrap.style.marginTop = "0.75rem";
+  const table = el("table", "sim-table");
+  const head = el("tr");
+  headers.forEach((h, i) => head.appendChild(el("th", i ? "num-col" : null, h)));
+  table.appendChild(head);
+  wrap.appendChild(table);
+  return { wrap, table };
+}
+
+// 1~3등이 실제로 나온 칸은 강조한다 (기댓값 행은 강조하지 않음).
+function rankCells(tr, ranks, format = fmtInt) {
+  [1, 2, 3, 4, 5].forEach(rank => {
+    const v = ranks[rank];
+    const cls = "num-col" + (format === fmtInt && v > 0 && rank <= 3 ? " hit" : "");
+    tr.appendChild(el("td", cls, format(v)));
+  });
+}
+
+function renderSimAmounts() {
+  simAmountsEl.replaceChildren();
+  simData.results.forEach(r => {
+    const btn = el("button", null, fmtAmount(r.amount));
+    btn.type = "button";
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(r.amount === simAmount));
+    btn.addEventListener("click", () => {
+      simAmount = r.amount;
+      renderSimulation();
+    });
+    simAmountsEl.appendChild(btn);
+  });
+}
+
+function renderSimulation() {
+  renderSimAmounts();
+  const drawByRound = new Map(simData.draws.map(d => [d.round, d]));
+  const result = simData.results.find(r => r.amount === simAmount);
+  const roundCount = simData.draws.length;
+  simOutput.replaceChildren();
+
+  // 선택한 개수: 회차별 등수 표
+  const detail = el("div", "card");
+  detail.appendChild(el("h3", "chart-title", `회차마다 ${fmtAmount(result.amount)}씩 구매`));
+  const summary = el("div", "sim-summary");
+  const addSummary = (label, value) => {
+    const item = el("span", null, label + " ");
+    item.appendChild(el("b", null, value));
+    summary.appendChild(item);
+  };
+  const chance = result.first_prize_chance * 100;
+  addSummary("회당 비용", fmtWon(result.cost_per_round));
+  addSummary(`${roundCount}회 총 비용`, fmtWon(result.total_cost));
+  addSummary("회당 1등이 1개라도 나올 확률", `${chance < 1 ? chance.toPrecision(2) : chance.toFixed(1)}%`);
+  detail.appendChild(summary);
+
+  const { wrap, table } = simTable(["회차", "1등", "2등", "3등", "4등", "5등"]);
+  result.per_round.forEach(row => {
+    const draw = drawByRound.get(row.round);
+    const tr = el("tr");
+    const roundCell = el("td", "strong nowrap", `${row.round}회`);
+    roundCell.appendChild(el("span", "sim-draw", `${draw.numbers.join("·")} +${draw.bonus}`));
+    tr.appendChild(roundCell);
+    rankCells(tr, row.ranks);
+    table.appendChild(tr);
+  });
+  const sumRow = el("tr", "sum-row");
+  sumRow.appendChild(el("td", "nowrap", "합계"));
+  rankCells(sumRow, result.totals);
+  table.appendChild(sumRow);
+  const expRow = el("tr");
+  expRow.appendChild(el("td", "nowrap", "이론 기댓값"));
+  rankCells(expRow, result.expected, fmtExpected);
+  table.appendChild(expRow);
+  detail.appendChild(wrap);
+  detail.appendChild(el("p", "hint", result.method === "direct"
+    ? "무작위 번호를 실제로 하나씩 뽑아 각 회차 당첨번호와 맞춰본 결과입니다."
+    : "개수가 많아 하나씩 뽑는 대신, 무작위 번호를 이만큼 샀을 때의 등수별 개수를 확률분포에서 바로 뽑았습니다. 하나씩 뽑은 것과 통계적으로 같은 결과입니다."));
+  simOutput.appendChild(detail);
+
+  // 전체 개수 한눈에 보기
+  const overview = el("div", "card");
+  overview.appendChild(el("h3", "chart-title", `구매 개수별 ${roundCount}회 합계`));
+  overview.appendChild(el("p", "chart-sub", "행을 누르면 위에서 회차별로 볼 수 있습니다."));
+  const all = simTable(["회차당", "1등", "2등", "3등", "4등", "5등"]);
+  simData.results.forEach(r => {
+    const tr = el("tr", "selectable" + (r.amount === simAmount ? " selected" : ""));
+    tr.tabIndex = 0;
+    const amountCell = el("td", "strong nowrap", fmtAmount(r.amount));
+    amountCell.appendChild(el("span", "sim-draw", `총 ${fmtWon(r.total_cost)}`));
+    tr.appendChild(amountCell);
+    rankCells(tr, r.totals);
+    const select = () => {
+      simAmount = r.amount;
+      renderSimulation();
+      simOutput.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    tr.addEventListener("click", select);
+    tr.addEventListener("keydown", event => { if (event.key === "Enter") select(); });
+    all.table.appendChild(tr);
+  });
+  overview.appendChild(all.wrap);
+  simOutput.appendChild(overview);
+}
+
+async function loadSimulation() {
+  simRerun.disabled = true;
+  $("sim-error").textContent = "";
+  try {
+    simData = await api("/api/simulate?rounds=5");
+    renderSimulation();
+  } catch (err) {
+    $("sim-error").textContent = err.message;
+  } finally {
+    simRerun.disabled = false;
+  }
+}
+
+simRerun.addEventListener("click", loadSimulation);
+tabLoaders.simulate = () => { if (!simData) loadSimulation(); };
 
 /* ---------- 백테스트 ---------- */
 const btOutput = $("bt-output");
