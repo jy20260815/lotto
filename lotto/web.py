@@ -25,6 +25,17 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 app = FastAPI(title="로또 번호 생성기")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+
+@app.middleware("http")
+async def revalidate_ui_files(request, call_next):
+    """화면 파일은 브라우저가 매번 최신인지 확인하게 한다 (바뀌지 않았으면 ETag로 캐시 재사용).
+    이게 없으면 업데이트 후에도 브라우저가 옛 app.js를 계속 쓸 수 있다."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 CATEGORY_LABELS = {
     "independent": "독립 50:50 방식",
     "fixed": "고정 1:1 방식",
