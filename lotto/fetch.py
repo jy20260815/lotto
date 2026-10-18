@@ -17,6 +17,8 @@ HEADERS = {
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2.0
 REQUEST_TIMEOUT = 15
+LATEST_ROUND_RETRIES = 5
+LATEST_ROUND_RETRY_DELAY_SECONDS = 60
 
 
 def _get_with_retry(session: requests.Session, url: str, **kwargs) -> requests.Response:
@@ -44,11 +46,16 @@ def new_session() -> requests.Session:
 
 
 def fetch_latest_round(session: requests.Session) -> int:
-    resp = _get_with_retry(session, RESULT_PAGE_URL)
-    match = re.search(r'id="opt_val"\s+value="(\d+)"', resp.text)
-    if not match:
-        raise RuntimeError("최신 회차 번호를 찾을 수 없습니다 (페이지 구조 변경 가능성)")
-    return int(match.group(1))
+    """점검/대기열 안내 페이지가 200으로 내려오는 경우가 있어, 회차 번호가 없으면
+    잠시 기다렸다가 다시 시도한다."""
+    for attempt in range(LATEST_ROUND_RETRIES + 1):
+        resp = _get_with_retry(session, RESULT_PAGE_URL)
+        match = re.search(r'id="opt_val"\s+value="(\d+)"', resp.text)
+        if match:
+            return int(match.group(1))
+        if attempt < LATEST_ROUND_RETRIES:
+            time.sleep(LATEST_ROUND_RETRY_DELAY_SECONDS)
+    raise RuntimeError("최신 회차 번호를 찾을 수 없습니다 (페이지 구조 변경 가능성)")
 
 
 def fetch_batch(session: requests.Session, direction: str, epsd: int) -> list[dict]:
